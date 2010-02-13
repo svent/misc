@@ -1,0 +1,33 @@
+#!/usr/bin/env ruby
+
+msfbase = __FILE__
+while File.symlink?(msfbase)
+	msfbase = File.expand_path(File.readlink(msfbase), File.dirname(msfbase))
+end
+
+$:.unshift(File.join(File.expand_path(File.dirname(msfbase)), 'lib'))
+
+require 'rex/text'
+require 'rex/encoding/xor/generic'
+require 'rex/exploitation/obfuscatejs'
+require 'rex/exploitation/encryptjs'
+
+if ARGV.length == 1
+	key = ARGV[0]
+	if key == "-r"
+		keyspace = ("A".."Z").to_a + ("a".."z").to_a + ("0".."9").to_a
+		key = Rex::Text.rand_text_alpha(rand(10) + 10)
+	end
+else
+	puts %Q|Usage: #{$0} <key> <infile >oufile
+
+       key: key used for encryption. use "-r" to generate a random key.
+	|
+	exit
+end
+
+code = STDIN.read
+encrypted = Rex::Exploitation::EncryptJS.encrypt(code, key)
+
+STDERR.puts "key used: #{key}"
+puts encrypted

