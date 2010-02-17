@@ -14,7 +14,7 @@ Despite other tools, this one does not include the decryption key into the resul
 http://host/file.html?<key> 
 </pre>
 
-h3. js_encrpt.patch
+h3. js_encrypt.patch
 
 The patch for javascript encryption, already integrated into metasploit.
 
