@@ -21,3 +21,9 @@ The patch for javascript encryption, already integrated into metasploit.
 h3. ie_aurora_jsencrypt.patch
 
 Patch adding the described js encryption to the ie_aurora exploit module, not integrated into metasploit.
+
+h3. screen_unlock.rb
+
+Script to unlock a windows screen by patching msv1_0.dll loaded by lsass.exe
+The scripts needs SYSTEM privileges to work. Once executed, every password will be accepted.
+Reverting the patch is also supported.
