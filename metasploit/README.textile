@@ -4,6 +4,18 @@ This folder contains some patches for the metasploit framework and some tools.
 
 The scripts must be executed from the metasploit root directory (where msfconsole and so on can be found).
 
+h3. enum_chrome.rb
+
+Script to extract data from a chrome installation.
+
+h3. ie_aurora_jsencrypt.patch
+
+Patch adding the described js encryption to the ie_aurora exploit module, not integrated into metasploit.
+
+h3. js_encrypt.patch
+
+The patch for javascript encryption, already integrated into metasploit.
+
 h3. msfjsencrypt
 
 This tool uses the javascript encryption that was integrated into metasploit with revision "6784":http://www.metasploit.com/redmine/projects/framework/repository/revisions/6784 (see js_encrypt.patch).
@@ -13,14 +25,6 @@ Despite other tools, this one does not include the decryption key into the resul
 <pre>
 http://host/file.html?<key> 
 </pre>
-
-h3. js_encrypt.patch
-
-The patch for javascript encryption, already integrated into metasploit.
-
-h3. ie_aurora_jsencrypt.patch
-
-Patch adding the described js encryption to the ie_aurora exploit module, not integrated into metasploit.
 
 h3. screen_unlock.rb
 
